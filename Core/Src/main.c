@@ -80,7 +80,7 @@ static void MX_USART1_UART_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-int sensor_weights[NUM_SENSORS] = { -4, -3, -2, -1,1, 2, 3, 4 };
+int sensor_weights[NUM_SENSORS] = { 0, -3, -2, -1,1, 2, 3, 0 };
 
 volatile int line;
 volatile int line2;
@@ -98,6 +98,15 @@ int rx_index = 0;
 float b ;
 JunctionType j;
 
+volatile uint8_t junction_handling_enabled = 1;
+
+#define CURVE_ENTRY_THRESHOLD  600.0f
+#define CURVE_EXIT_THRESHOLD   300.0f
+#define CURVE_KP_SCALE          1.5f
+#define CURVE_KD_SCALE          1.8f
+#define CURVE_SPEED_SCALE       0.60f
+
+static uint8_t in_curve = 0;
 
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -137,21 +146,31 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 					pid.Kd = d;
 					pid.integral = 0;
 					pid.last_error = 0;
+					pid.d_filtered = 0;
 				}
 			}
 
 			else if (strncmp(cmd, "PARAM:", 6) == 0) {
 			    char *bs = strstr(cmd, "BS");
 			    char *pl = strstr(cmd, "PL");
+			    char *jh = strstr(cmd, "JH");
 			    if (bs) sensor_array.base_speed = atoi(bs + 2);
 			    if (pl) pid.limit = atoi(pl + 2);
+			    if (jh) junction_handling_enabled = atoi(jh + 2);
 			}
 
 
 			else if (strcmp(cmd, "START") == 0) {
 				start = 1;
+				in_curve = 0;        // always start fresh in straight mode
+				pid.integral = 0;
+				pid.last_error = 0;
+				pid.d_filtered = 0;
+
 			} else if (strcmp(cmd, "STOP") == 0) {
 				start = 0;
+				in_curve = 0;        // clear so next start is clean
+				pid.integral = 0;
 			}
 
 			else if (strlen(cmd) > 1) {
@@ -173,7 +192,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 
 		} else {
-			rx_buffer[rx_index++] = rx_data;
+			if (rx_index < sizeof(rx_buffer) - 1){
+			rx_buffer[rx_index++] = rx_data;}
 		}
 
 		HAL_UART_Receive_IT(&huart1, &rx_data, 1);
@@ -184,7 +204,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 
 void Send_Telemetry() {
-    char buf[160];
+    static char buf[160];
     char ir_part[80] = "IR:";
     char tmp[8];
 
@@ -200,15 +220,46 @@ void Send_Telemetry() {
 
 
     snprintf(buf, sizeof(buf),
-        "%s;PL:%d;PR:%d;BV:%.1f;PE:%.1f;PO:%.1f\n",
+        "%s;PL:%d;PR:%d;BV:%.1f;PE:%.1f;PO:%.1f;JC:%d\n",
         ir_part,
         (int)(sensor_array.base_speed + correction),
         (int)(sensor_array.base_speed - correction),
         b, (float)line, (float)correction
     );
 
-    HAL_UART_Transmit(&huart1, (uint8_t*)buf, strlen(buf), 200);
+    HAL_UART_Transmit_IT(&huart1, (uint8_t*)buf, strlen(buf));
 }
+
+/* USER CODE BEGIN 4 */
+float get_line_error_continuous(Sensor_Array *array) {
+    float sum_weighted = 0.0f;
+    float sum_values   = 0.0f;
+    float max_val      = 0.0f;
+    int   active_count = 0;
+
+    for (int i = 0; i < array->number_of_sensors; i++) {
+        if (array->weights[i] == 0) continue;  // skip non-working sensors
+
+        float val = (float)array->array[i].adc_raw;
+        sum_weighted += (float)array->weights[i] * val;
+        sum_values   += val;
+        if (val > max_val) max_val = val;
+        if (val > 1500.0f) active_count++;
+    }
+
+    if (max_val < 1500.0f) {
+        return 0.0f;
+    }
+
+    if (active_count >= 4) return 0.0f;
+
+    float result = (sum_weighted / sum_values) * 500.0f;
+
+    if (fabsf(result) < 50.0f) result = 0.0f;
+
+    return (result);
+}
+/* USER CODE END 4 */
 
 /* USER CODE END 0 */
 
@@ -265,12 +316,17 @@ int main(void)
 
 	Initialize_Sensor_Array(&sensor_array);
 
-	pid.Kd = 1;
-	pid.Ki = 0.5;
-	pid.Kp = 1;
+	pid.Kd = 5;
+	pid.Ki = 0;
+	pid.Kp = 10;
 	pid.integral = 0;
 	pid.last_error = 0;
 	pid.limit = 300;
+	pid.d_filtered = 0;
+	pid.d_alpha = 0.85f;
+
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
 	uint32_t last_time = HAL_GetTick();
 	static uint32_t last_telem = 0;
@@ -284,6 +340,7 @@ int main(void)
 
 
 		b = battery_voltage(dma_buffer);
+
 		Sync_Sensors(&sensor_array);
 
 		uint32_t current_time = HAL_GetTick();
@@ -309,21 +366,60 @@ int main(void)
 		if (start == 1) {
 
 
+			j = NO_JUNCTION;
+						if (junction_handling_enabled) {
+							j = detect_junction_digital(&sensor_array);
+						}
+					    if (j != NO_JUNCTION) {
+					        handle_junction(&sensor_array, j, 900);
 
+					        pid.integral   = 0;
+					        pid.last_error = 0;
+					        in_curve       = 0;
+					        pid.d_filtered = 0;
+					    }
 
-		    j = detect_junction_digital(&sensor_array);
+					    else {
+					    	float error_f = get_line_error_continuous(&sensor_array);
+					    	line = (int)error_f;
 
-		    if (j != NO_JUNCTION) {
+					    	float abs_err = fabsf(error_f);
 
-		        handle_junction(&sensor_array, j, 600);
-		    }
-		    else {
-		    	line = get_line_error_digital(&sensor_array);
+					    					    	/* Hysteresis: separate entry/exit thresholds prevent
+					    					    	 * gain chattering when error hovers near the boundary */
+					    	if (!in_curve && abs_err > CURVE_ENTRY_THRESHOLD) {
+					    			in_curve = 1;
+					    			pid.integral = 0;
+					    	}
+					    	else if (in_curve && abs_err < CURVE_EXIT_THRESHOLD) {
+					    			in_curve = 0;
+					    			pid.integral = 0;
+					    	}
 
-		        correction = calculate_pid(&pid, line, dt);
-		        follow_line(correction, &sensor_array);
-		    }
-		}
+					    	if (in_curve) {
+					    			float saved_kp = pid.Kp;
+					    			float saved_kd = pid.Kd;
+					    			int   saved_bs = sensor_array.base_speed;
+
+					    			pid.Kp = saved_kp * CURVE_KP_SCALE;
+					    			pid.Kd = saved_kd * CURVE_KD_SCALE;
+					    			sensor_array.base_speed = (int)(saved_bs * CURVE_SPEED_SCALE);
+
+					    			pid.d_alpha = 0.50f;
+					    			correction = calculate_pid(&pid, line, dt);
+					    			pid.d_alpha = 0.85f;
+
+					    			follow_line(correction, &sensor_array);
+
+					    			pid.Kp = saved_kp;
+					    			pid.Kd = saved_kd;
+					    			sensor_array.base_speed = saved_bs;
+					    	} else {
+					    			correction = calculate_pid(&pid, line, dt);
+					    			follow_line(correction, &sensor_array);
+					    					    	}
+					    					    }
+					    					}
 		else {
 		    set_motor_speed(0, 0, b);
 		}
@@ -355,7 +451,12 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 64;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -365,8 +466,8 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV4;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 

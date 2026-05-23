@@ -49,6 +49,12 @@ void set_motor_speed(int left_motor, int right_motor, float battery_voltage) {
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, left_motor);
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
     }
+    /*else if (left_motor == 0 && right_motor == 0) {
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 1000);
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 0);
+        }*/
 }
 
 
@@ -66,11 +72,11 @@ void follow_line(int correction , Sensor_Array* sensor_array) {
 
 void swing_turn_left(Sensor_Array *sa, int speed) {
 
-	set_motor_speed(speed, speed, battery_voltage(dma_buffer));
-	HAL_Delay(100);
+	set_motor_speed(speed * 0.6f, speed * 0.6f, battery_voltage(dma_buffer));
+	HAL_Delay(60);
 
-    set_motor_speed(-speed, speed, battery_voltage(dma_buffer));
-    HAL_Delay(100);
+	set_motor_speed(-speed * 0.8f, speed * 0.8f, battery_voltage(dma_buffer));
+    HAL_Delay(180);
 
 
     while (1) {
@@ -86,26 +92,28 @@ void swing_turn_left(Sensor_Array *sa, int speed) {
     }
 
 
-    set_motor_speed(speed, -speed, battery_voltage(dma_buffer));
-    HAL_Delay(20);
+    set_motor_speed(0, 0, battery_voltage(dma_buffer));
+    HAL_Delay(30);
 
+    set_motor_speed(speed * 0.4f, speed * 0.4f, battery_voltage(dma_buffer));
+    HAL_Delay(40);
 
     set_motor_speed(0, 0, battery_voltage(dma_buffer));
 }
 
 void swing_turn_right(Sensor_Array *sa, int speed) {
-	set_motor_speed(speed, speed, battery_voltage(dma_buffer));
-		HAL_Delay(100);
-    set_motor_speed(speed, -speed, battery_voltage(dma_buffer));
+	set_motor_speed(speed * 0.6f, speed * 0.6f, battery_voltage(dma_buffer));
+	HAL_Delay(60);
 
-    HAL_Delay(100);
+	set_motor_speed(speed * 0.8f, -speed * 0.8f, battery_voltage(dma_buffer));
+	HAL_Delay(180);
 
     while (1) {
         Sync_Sensors(sa);
         processSensors(sa);
         binarizeSensors(sa);
 
-        if (sa->array[2].on == 1 || sa->array[3].on == 1) {
+        if (sa->array[3].on == 1 || sa->array[4].on == 1) {
             break;
         }
 
@@ -113,8 +121,11 @@ void swing_turn_right(Sensor_Array *sa, int speed) {
     }
 
 
-    set_motor_speed(-speed, speed, battery_voltage(dma_buffer));
-    HAL_Delay(20);
+    set_motor_speed(0, 0, battery_voltage(dma_buffer));
+    HAL_Delay(30);
+
+    set_motor_speed(speed * 0.4f, speed * 0.4f, battery_voltage(dma_buffer));
+    HAL_Delay(40);
 
     set_motor_speed(0, 0, battery_voltage(dma_buffer));
 }
@@ -134,12 +145,13 @@ void handle_junction(Sensor_Array *sa, JunctionType j , int speed) {
 
         case T_JUNCTION:
         	set_motor_speed(750, 750, battery_voltage(dma_buffer));
-        	HAL_Delay(10);
+        	HAL_Delay(200);
         	set_motor_speed(0, 0, battery_voltage(dma_buffer));
+        	HAL_Delay(30);
         	break;
 
         case CROSS_JUNCTION:
-        	HAL_Delay(100);
+        	HAL_Delay(10);
             break;
 
 

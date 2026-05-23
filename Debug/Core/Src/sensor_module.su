@@ -3,9 +3,9 @@
 ../Core/Src/sensor_module.c:61:6:autoCalibrate	48	static
 ../Core/Src/sensor_module.c:93:6:processSensors	32	static
 ../Core/Src/sensor_module.c:110:6:binarizeSensors	24	static
-../Core/Src/sensor_module.c:131:5:get_line_error	32	static
-../Core/Src/sensor_module.c:142:5:get_line_error_digital	40	static
-../Core/Src/sensor_module.c:171:5:calculate_pid	40	static
-../Core/Src/sensor_module.c:194:5:count_active_sensors	24	static
-../Core/Src/sensor_module.c:206:14:detect_junction	56	static
-../Core/Src/sensor_module.c:245:14:detect_junction_digital	24	static
+../Core/Src/sensor_module.c:135:5:get_line_error	32	static
+../Core/Src/sensor_module.c:146:5:get_line_error_digital	40	static
+../Core/Src/sensor_module.c:175:5:calculate_pid	48	static
+../Core/Src/sensor_module.c:200:5:count_active_sensors	24	static
+../Core/Src/sensor_module.c:212:14:detect_junction	56	static
+../Core/Src/sensor_module.c:251:14:detect_junction_digital	24	static

@@ -13,6 +13,8 @@ typedef struct {
     float integral;
     float last_error;
     float limit;
+    float d_filtered;
+    float d_alpha
 } PID_Controller;
 
 

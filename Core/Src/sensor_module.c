@@ -112,6 +112,10 @@ void binarizeSensors(Sensor_Array *sensor_array)
 
     for (int i = 0; i < NUM_SENSORS; i++)
     {
+    	if (i == 0 || i == 7) {
+    	            sensor_array->array[i].on = 0;
+    	            continue;
+    	        }
 
         if (sensor_array->array[i].adc_raw > sensor_array->array[i].threshold)
         {
@@ -179,7 +183,9 @@ int calculate_pid(PID_Controller *pid, int error, float dt) {
     float I = pid->Ki * pid->integral;
 
 
-    float D = pid->Kd * (error - pid->last_error) / dt;
+    float raw_d = (float)(error - pid->last_error);
+    pid->d_filtered = pid->d_alpha * pid->d_filtered + 0.15f * raw_d;  // EMA
+    float D = pid->Kd * pid->d_filtered;
     pid->last_error = error;
 
     float output = P + I + D;
@@ -245,19 +251,20 @@ JunctionType detect_junction(Sensor_Array *sensor_array) {
 JunctionType detect_junction_digital(Sensor_Array *sensor_array) {
     int sensor_count = count_active_sensors(sensor_array);
 
-    if (sensor_count >= 5 && sensor_array->array[1].on == 1 && sensor_array->array[6].on == 1  ) {
-        return T_JUNCTION;
-    }
+	if (sensor_count >= 4) {
+		if (sensor_count >= 5 && sensor_array->array[3].on == 1 && sensor_array->array[4].on == 1  ) {
+			return T_JUNCTION;
+		}
 
-    if (sensor_array->array[0].on == 1  && sensor_array->array[7].on == 0 && sensor_array->array[1].on == 1) {
-        return LEFT_JUNCTION;
-    }
+		if (sensor_array->array[1].on == 1  && (sensor_array->array[3].on == 1 || sensor_array->array[4].on == 1) && sensor_array->array[5].on == 0) {
+			return LEFT_JUNCTION;
+		}
 
-    if (sensor_array->array[7].on == 1  && sensor_array->array[0].on == 0 && sensor_array->array[6].on == 1)  {
-        return RIGHT_JUNCTION;
-    }
-
-    return NO_JUNCTION;
+		if (sensor_array->array[6].on == 1  && (sensor_array->array[3].on == 1 || sensor_array->array[4].on == 1) && sensor_array->array[2].on == 0)  {
+			return RIGHT_JUNCTION;
+		}
+	}
+	return NO_JUNCTION;
 }
 
 
