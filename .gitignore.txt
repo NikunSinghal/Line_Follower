@@ -1,0 +1,16 @@
+#Build directories
+Debug/
+Release/
+
+#Toolchain and temporary files
+*.o
+*.d
+*.su
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+#Local IDE settings
+.settings/

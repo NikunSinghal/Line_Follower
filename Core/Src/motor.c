@@ -76,7 +76,7 @@ void swing_turn_left(Sensor_Array *sa, int speed) {
 	HAL_Delay(60);
 
 	set_motor_speed(-speed * 0.8f, speed * 0.8f, battery_voltage(dma_buffer));
-    HAL_Delay(180);
+    HAL_Delay(100);
 
 
     while (1) {
@@ -106,7 +106,7 @@ void swing_turn_right(Sensor_Array *sa, int speed) {
 	HAL_Delay(60);
 
 	set_motor_speed(speed * 0.8f, -speed * 0.8f, battery_voltage(dma_buffer));
-	HAL_Delay(180);
+	HAL_Delay(100);
 
     while (1) {
         Sync_Sensors(sa);
@@ -145,7 +145,7 @@ void handle_junction(Sensor_Array *sa, JunctionType j , int speed) {
 
         case T_JUNCTION:
         	set_motor_speed(750, 750, battery_voltage(dma_buffer));
-        	HAL_Delay(200);
+        	HAL_Delay(100);
         	set_motor_speed(0, 0, battery_voltage(dma_buffer));
         	HAL_Delay(30);
         	break;

@@ -108,6 +108,10 @@ volatile uint8_t junction_handling_enabled = 1;
 
 static uint8_t in_curve = 0;
 
+static uint8_t junction_confirm_count = 0;
+static JunctionType junction_candidate = NO_JUNCTION;
+#define JUNCTION_CONFIRM_THRESHOLD 3
+
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
