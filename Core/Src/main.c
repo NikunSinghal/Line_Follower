@@ -105,9 +105,9 @@ volatile uint8_t junction_handling_enabled = 1;
 #define CURVE_KP_SCALE          1.5f
 #define CURVE_KD_SCALE          1.8f
 #define CURVE_SPEED_SCALE       0.60f
+#define SystemCoreClock 16000000.0f
 
 static uint8_t in_curve = 0;
-
 static uint8_t junction_confirm_count = 0;
 static JunctionType junction_candidate = NO_JUNCTION;
 #define JUNCTION_CONFIRM_THRESHOLD 3
@@ -238,30 +238,28 @@ void Send_Telemetry() {
 float get_line_error_continuous(Sensor_Array *array) {
     float sum_weighted = 0.0f;
     float sum_values   = 0.0f;
-    float max_val      = 0.0f;
-    int   active_count = 0;
+    static float last_valid_error = 0.0f;
 
-    for (int i = 0; i < array->number_of_sensors; i++) {
-        if (array->weights[i] == 0) continue;  // skip non-working sensors
+    // Use ONLY 1 through 6. Ignore 0 and 7.
+    for (int i = 1; i < 7; i++) {
+        // Use mapped_value to ignore track lighting changes (1000=black)
+        float val = (float)array->array[i].mapped_value;
 
-        float val = (float)array->array[i].adc_raw;
-        sum_weighted += (float)array->weights[i] * val;
-        sum_values   += val;
-        if (val > max_val) max_val = val;
-        if (val > 1500.0f) active_count++;
+        // Only count sensors seeing the line
+        if (val > 200.0f) {
+            sum_weighted += (float)array->weights[i] * val;
+            sum_values   += val;
+        }
     }
 
-    if (max_val < 1500.0f) {
-        return 0.0f;
+    if (sum_values == 0.0f) {
+        return last_valid_error; // If line drops, keep turning the same way
     }
 
-    if (active_count >= 4) return 0.0f;
+    last_valid_error = (sum_weighted / sum_values) * 500.0f;
 
-    float result = (sum_weighted / sum_values) * 500.0f;
-
-    if (fabsf(result) < 50.0f) result = 0.0f;
-
-    return (result);
+    // DELETED the 50.0f deadband. Let the PID correct small errors!
+    return last_valid_error;
 }
 /* USER CODE END 4 */
 
@@ -332,7 +330,7 @@ int main(void)
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-	uint32_t last_time = HAL_GetTick();
+	uint32_t last_time = DWT->CYCCNT;
 	static uint32_t last_telem = 0;
 
 
@@ -347,7 +345,7 @@ int main(void)
 
 		Sync_Sensors(&sensor_array);
 
-		uint32_t current_time = HAL_GetTick();
+		uint32_t current_time = DWT->CYCCNT;
 		uint32_t time_diff = current_time - last_time;
 
 		if (time_diff == 0) {
@@ -356,7 +354,7 @@ int main(void)
 		else{
 
 
-		dt = time_diff / 1000.0f;
+		dt = (float)time_diff / (float)SystemCoreClock;
 		last_time = current_time;}
 
 		processSensors(&sensor_array);
@@ -368,62 +366,42 @@ int main(void)
 		}
 
 		if (start == 1) {
-
-
-			j = NO_JUNCTION;
+						j = NO_JUNCTION;
 						if (junction_handling_enabled) {
 							j = detect_junction_digital(&sensor_array);
 						}
 					    if (j != NO_JUNCTION) {
-					        handle_junction(&sensor_array, j, 900);
+					    	if (j == junction_candidate) {
+					    	        junction_confirm_count++;
+					    	}else {
+					    	        junction_candidate = j;
+					    	        junction_confirm_count = 1;
+					    	}
 
-					        pid.integral   = 0;
-					        pid.last_error = 0;
-					        in_curve       = 0;
-					        pid.d_filtered = 0;
+					    	if (junction_confirm_count >= JUNCTION_CONFIRM_THRESHOLD) {
+					    	            handle_junction(&sensor_array, junction_candidate, 900);
+					    	            pid.integral   = 0;
+					    	            pid.last_error = 0;
+					    	            pid.d_filtered = 0;
+					    	            junction_confirm_count = 0;
+					    	            junction_candidate = NO_JUNCTION;
+					    	        } else {
+					    	            // Keep following the line normally while we wait for confirmation!
+					    	            line = (int)get_line_error_continuous(&sensor_array);
+					    	            correction = calculate_pid(&pid, line, dt);
+					    	            follow_line(correction, &sensor_array);
+					    	        }
+					    }
+					    else {
+								junction_confirm = 0;
+								junction_candidate = NO_JUNCTION;
+								float error_f = get_line_error_continuous(&sensor_array);
+								line = (int)error_f;
+								correction = calculate_pid(&pid, line, dt);
+								follow_line(correction, &sensor_array);
 					    }
 
-					    else {
-					    	float error_f = get_line_error_continuous(&sensor_array);
-					    	line = (int)error_f;
-
-					    	float abs_err = fabsf(error_f);
-
-					    					    	/* Hysteresis: separate entry/exit thresholds prevent
-					    					    	 * gain chattering when error hovers near the boundary */
-					    	if (!in_curve && abs_err > CURVE_ENTRY_THRESHOLD) {
-					    			in_curve = 1;
-					    			pid.integral = 0;
-					    	}
-					    	else if (in_curve && abs_err < CURVE_EXIT_THRESHOLD) {
-					    			in_curve = 0;
-					    			pid.integral = 0;
-					    	}
-
-					    	if (in_curve) {
-					    			float saved_kp = pid.Kp;
-					    			float saved_kd = pid.Kd;
-					    			int   saved_bs = sensor_array.base_speed;
-
-					    			pid.Kp = saved_kp * CURVE_KP_SCALE;
-					    			pid.Kd = saved_kd * CURVE_KD_SCALE;
-					    			sensor_array.base_speed = (int)(saved_bs * CURVE_SPEED_SCALE);
-
-					    			pid.d_alpha = 0.50f;
-					    			correction = calculate_pid(&pid, line, dt);
-					    			pid.d_alpha = 0.85f;
-
-					    			follow_line(correction, &sensor_array);
-
-					    			pid.Kp = saved_kp;
-					    			pid.Kd = saved_kd;
-					    			sensor_array.base_speed = saved_bs;
-					    	} else {
-					    			correction = calculate_pid(&pid, line, dt);
-					    			follow_line(correction, &sensor_array);
-					    					    	}
-					    					    }
-					    					}
+		}
 		else {
 		    set_motor_speed(0, 0, b);
 		}
@@ -431,7 +409,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	}
+
   /* USER CODE END 3 */
 }
 

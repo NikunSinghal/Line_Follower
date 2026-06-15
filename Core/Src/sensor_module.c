@@ -174,16 +174,17 @@ int get_line_error_digital(Sensor_Array* sensor_array) {
 
 int calculate_pid(PID_Controller *pid, int error, float dt) {
 
+	// 1. Quadratic Proportional Term
+	float Kp2 = 0.002f; // Tune this: 0.001 to 0.005 range
+	float P = (pid->Kp * (float)error) + (Kp2 * (float)error * fabsf((float)error));
 
-    float P = pid->Kp * error;
-
-    pid->integral += (error * dt);
+    pid->integral += ((float)error * dt);
     if (pid->integral > pid->limit) pid->integral = pid->limit;
     if (pid->integral < -pid->limit) pid->integral = -pid->limit;
     float I = pid->Ki * pid->integral;
 
 
-    float raw_d = (float)(error - pid->last_error);
+    float raw_d = ((float)error - (float)pid->last_error)/ dt;
     pid->d_filtered = pid->d_alpha * pid->d_filtered + (1.0f - pid->d_alpha) * raw_d;  // EMA
     float D = pid->Kd * pid->d_filtered;
     pid->last_error = error;

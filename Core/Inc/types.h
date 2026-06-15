@@ -14,7 +14,7 @@ typedef struct {
     float last_error;
     float limit;
     float d_filtered;
-    float d_alpha
+    float d_alpha;
 } PID_Controller;
 
 
